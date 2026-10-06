@@ -13,12 +13,6 @@ import {
 import { Horse } from './horse';
 import type { InputState } from '../engine/input';
 
-function normalizeAngle(a: number): number {
-  while (a > Math.PI) a -= Math.PI * 2;
-  while (a < -Math.PI) a += Math.PI * 2;
-  return a;
-}
-
 function damp(current: number, target: number, lambda: number, dt: number): number {
   const t = Math.exp(-lambda * dt);
   return current * t + target * (1 - t);
@@ -31,8 +25,6 @@ export class HorseController {
   private timeSinceGrounded = 0;
   private tiltPitch = 0;
   private tiltRoll = 0;
-  private camYaw = 0;
-
   readonly horse: Horse;
   yaw = 0;
   pos = { x: 0, y: 0, z: 0 };
@@ -47,10 +39,6 @@ export class HorseController {
     this.pos.y = horse.root.position.y;
     this.pos.z = horse.root.position.z;
     this.yaw = horse.root.rotation.y;
-  }
-
-  setCameraYaw(yaw: number) {
-    this.camYaw = yaw;
   }
 
   update(dt: number, input: InputState) {
@@ -114,15 +102,9 @@ export class HorseController {
     // Yaw steering (only when not eating/sitting)
     if (!this.sitting && !this.eating) {
       if (input.moveZ > 0) {
-        let desiredYaw = this.camYaw;
-        if (input.moveX < 0) desiredYaw -= 0.4;
-        if (input.moveX > 0) desiredYaw += 0.4;
-        const diff = normalizeAngle(desiredYaw - this.yaw);
-        const step = Math.sign(diff) * Math.min(Math.abs(diff), turnRate * dt);
-        this.yaw += step;
+        this.yaw += input.moveX * turnRate * dt;
       } else {
-        if (input.moveX < 0) this.yaw -= TURN_RATE_WALK * dt;
-        if (input.moveX > 0) this.yaw += TURN_RATE_WALK * dt;
+        this.yaw += input.moveX * TURN_RATE_WALK * dt;
       }
     }
 

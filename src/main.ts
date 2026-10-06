@@ -9,6 +9,7 @@ import { GrassSystem } from './world/grass';
 import { Horse } from './entities/horse';
 import { HorseController } from './entities/horseController';
 import { CameraRig } from './entities/cameraRig';
+import { AutoPilot } from './entities/autoPilot';
 
 async function init() {
   const container = document.getElementById('canvas-container')!;
@@ -38,6 +39,7 @@ async function init() {
   let horse: Horse | null = null;
   let controller: HorseController | null = null;
   let cameraRig: CameraRig | null = null;
+  const autoPilot = new AutoPilot();
 
   const loader = new GLTFLoader();
   loader.load('/models/horse.glb', (gltf) => {
@@ -62,8 +64,8 @@ async function init() {
       input.tick();
 
       if (controller && cameraRig) {
-        controller.setCameraYaw(cameraRig.getCameraYaw(controller.yaw));
-        controller.update(dt, input.state);
+        const autoInput = autoPilot.update(dt, controller.horse.root.position.x, controller.horse.root.position.z, controller.yaw, input.state);
+        controller.update(dt, autoInput);
 
         cameraRig.update(
           dt,

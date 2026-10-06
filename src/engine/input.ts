@@ -44,8 +44,8 @@ export class InputManager {
 
     this.state.moveX = 0;
     this.state.moveZ = 0;
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) this.state.moveX -= 1;
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) this.state.moveX += 1;
+    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) this.state.moveX += 1;
+    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) this.state.moveX -= 1;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) this.state.moveZ += 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) this.state.moveZ -= 1;
   }

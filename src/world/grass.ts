@@ -240,21 +240,36 @@ export class GrassSystem {
     const cz = Math.floor(cameraPos.z / this.chunkSize) * this.chunkSize;
 
     const t = performance.now() / 1000;
-    let idx = 0;
+    const targets: Array<{ x: number; z: number; key: string }> = [];
+    const targetKeys = new Set<string>();
     for (let dz = -range; dz <= range; dz++) {
       for (let dx = -range; dx <= range; dx++) {
-        const targetX = cx + dx * this.chunkSize;
-        const targetZ = cz + dz * this.chunkSize;
-        const chunk = this.chunks[idx];
-        if (
-          Math.abs(chunk.originX - targetX) > 0.1 ||
-          Math.abs(chunk.originZ - targetZ) > 0.1
-        ) {
-          chunk.regenerate(targetX, targetZ);
-        }
-        chunk.update(t);
-        idx++;
+        const x = cx + dx * this.chunkSize;
+        const z = cz + dz * this.chunkSize;
+        const key = `${x},${z}`;
+        targets.push({ x, z, key });
+        targetKeys.add(key);
       }
+    }
+
+    const chunksByOrigin = new Map<string, GrassChunk>();
+    const recyclable: GrassChunk[] = [];
+    for (const chunk of this.chunks) {
+      const key = `${chunk.originX},${chunk.originZ}`;
+      if (targetKeys.has(key) && !chunksByOrigin.has(key)) {
+        chunksByOrigin.set(key, chunk);
+      } else {
+        recyclable.push(chunk);
+      }
+    }
+
+    for (const target of targets) {
+      let chunk = chunksByOrigin.get(target.key);
+      if (!chunk) {
+        chunk = recyclable.pop();
+        if (chunk) chunk.regenerate(target.x, target.z);
+      }
+      chunk?.update(t);
     }
   }
 

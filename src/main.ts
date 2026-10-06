@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createRenderer, getBackendName } from './engine/renderer';
 import { startLoop } from './engine/loop';
 import { InputManager } from './engine/input';
-import { createTerrain } from './world/terrain';
+import { createTerrain, updateTerrain } from './world/terrain';
 import { setupSkyAndFog } from './world/sky';
 import { GrassSystem } from './world/grass';
 import { Weather } from './world/weather';
@@ -145,6 +145,11 @@ async function init() {
           controller.yaw,
           Math.abs(controller.speed) > 0.3,
           controller.speed
+        );
+        updateTerrain(
+          terrain,
+          controller.horse.root.position.x,
+          controller.horse.root.position.z
         );
 
         grassSystem.update(camera.position);

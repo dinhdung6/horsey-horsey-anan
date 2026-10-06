@@ -64,6 +64,7 @@ class WeatherValues {
   fogDensity = 0;
   windStrength = 0;
   wetness = 0;
+  hdriIntensity = 0;
   sunColor = new Color();
   ambientColor = new Color();
   skyTop = new Color();
@@ -110,6 +111,7 @@ class WeatherValues {
     this.fogDensity = lerp(from.fogDensity, target.fogDensity, t);
     this.windStrength = lerp(from.windStrength, target.windStrength, t);
     this.wetness = lerp(from.wetness, target.wetness, t);
+    this.hdriIntensity = lerp(from.hdriIntensity, target.hdriIntensity, t);
     this.precipitation = t > 0.5 ? target.precipitation : from.precipitation;
     this.lightning = t > 0.5 ? target.lightning : from.lightning;
   }

@@ -121,7 +121,7 @@ export class GrassChunk {
     this.mesh = new InstancedMesh(geo, material, this.bladesPerChunk);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
-    this.mesh.frustumCulled = true;
+    this.mesh.frustumCulled = false;
   }
 
   regenerate(cx: number, cz: number) {

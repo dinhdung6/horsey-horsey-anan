@@ -1,0 +1,9 @@
+export const WALK_SPEED = 2.0;
+export const RUN_SPEED = 7.0;
+export const REVERSE_SPEED = 1.0;
+export const ACCEL_TIME = 0.25; // seconds to reach target speed
+export const TURN_RATE_WALK = 2.5; // rad/s
+export const TURN_RATE_RUN = 1.8; // rad/s
+export const JUMP_VELOCITY = 5.0; // m/s
+export const GRAVITY = 14.0; // m/s²
+export const COYOTE_TIME = 0.1; // seconds

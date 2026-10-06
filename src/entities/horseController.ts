@@ -102,9 +102,9 @@ export class HorseController {
     // Yaw steering (only when not eating/sitting)
     if (!this.sitting && !this.eating) {
       if (input.moveZ > 0) {
-        this.yaw += input.moveX * turnRate * dt;
+        this.yaw -= input.moveX * turnRate * dt;
       } else {
-        this.yaw += input.moveX * TURN_RATE_WALK * dt;
+        this.yaw -= input.moveX * TURN_RATE_WALK * dt;
       }
     }
 

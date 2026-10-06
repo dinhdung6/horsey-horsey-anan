@@ -1,9 +1,11 @@
-import { WebGPURenderer } from 'three/webgpu';
+import { WebGPURenderer, ACESFilmicToneMapping } from 'three/webgpu';
 
 const MAX_PIXEL_RATIO = 2;
 
 export async function createRenderer(container: HTMLElement): Promise<WebGPURenderer> {
   const renderer = new WebGPURenderer({ antialias: true });
+  renderer.toneMapping = ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.7;
   await renderer.init();
 
   function handleResize() {

@@ -23,8 +23,8 @@ import {
   min,
 } from 'three/tsl';
 import { heightAt } from './terrain';
+import type { QualityPreset } from '../config/quality';
 
-const BLADES_PER_CHUNK = 5000;
 const CHUNK_SIZE = 16;
 const BITE_CAPACITY = 8;
 const BITE_RADIUS = 0.6;
@@ -37,11 +37,15 @@ export class GrassChunk {
   originZ = 0;
   timeNode = uniform(0.0);
   horsePosNode = uniform(new Vector3(0, -999, 0));
+  windStrengthNode = uniform(0.3);
+  wetnessNode = uniform(0.0);
+  bladesPerChunk: number;
   bitePosXZNodes: any[] = [];
   biteTimeNodes: any[] = [];
   biteWriteIndex = 0;
 
-  constructor() {
+  constructor(bladesPerChunk = 5000) {
+    this.bladesPerChunk = bladesPerChunk;
     for (let i = 0; i < BITE_CAPACITY; i++) {
       this.bitePosXZNodes.push(uniform(new Vector2(0, 0)));
       this.biteTimeNodes.push(uniform(-999));
@@ -59,16 +63,21 @@ export class GrassChunk {
 
     const bladeT = attribute('bladeT', 'float');
 
+    // Wetness darkening (up to 40%)
+    const wetnessDarken = float(1.0).sub(this.wetnessNode.mul(0.4));
+
     const rootColor = vec3(0.08, 0.18, 0.05);
     const tipColor = vec3(0.55, 0.75, 0.25);
-    const colorNode = mix(rootColor, tipColor, pow(bladeT, float(1.3)));
+    const colorNode = mix(rootColor, tipColor, pow(bladeT, float(1.3))).mul(
+      wetnessDarken
+    );
 
     const groundY = sin(positionLocal.x.mul(0.04)).mul(1.2)
       .add(cos(positionLocal.z.mul(0.035)))
       .add(sin(positionLocal.x.add(positionLocal.z).mul(0.012)).mul(2.5));
 
     const wind = sin(positionLocal.x.mul(0.3).add(this.timeNode.mul(1.2)))
-      .mul(0.3).mul(bladeT).mul(bladeT);
+      .mul(this.windStrengthNode).mul(bladeT).mul(bladeT);
 
     const hdx = positionLocal.x.sub((this.horsePosNode as any).x);
     const hdz = positionLocal.z.sub((this.horsePosNode as any).z);
@@ -98,7 +107,6 @@ export class GrassChunk {
     const newAboveGround = aboveGround.mul(biteScale);
     const newY = groundY.add(newAboveGround);
 
-    // TSL node typing workaround — runtime is correct
     const displaced = (vec3 as any)(
       positionLocal.x.add(wind).add(hPushX),
       newY,
@@ -110,10 +118,10 @@ export class GrassChunk {
     (material as any).positionNode = displaced;
     material.side = DoubleSide;
 
-    this.mesh = new InstancedMesh(geo, material, BLADES_PER_CHUNK);
+    this.mesh = new InstancedMesh(geo, material, this.bladesPerChunk);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
-    this.mesh.frustumCulled = false;
+    this.mesh.frustumCulled = true;
   }
 
   regenerate(cx: number, cz: number) {
@@ -121,7 +129,7 @@ export class GrassChunk {
     this.originZ = cz;
     const dummy = new Object3D();
 
-    for (let i = 0; i < BLADES_PER_CHUNK; i++) {
+    for (let i = 0; i < this.bladesPerChunk; i++) {
       const lx = (Math.random() - 0.5) * CHUNK_SIZE;
       const lz = (Math.random() - 0.5) * CHUNK_SIZE;
       const x = cx + lx;
@@ -158,17 +166,23 @@ export class GrassSystem {
   chunks: GrassChunk[] = [];
   gridSize = 7;
   chunkSize = CHUNK_SIZE;
+  bladesPerChunk = 5000;
+  bladeSegments = 1;
 
-  constructor() {
+  constructor(qualityPreset?: QualityPreset) {
+    if (qualityPreset) {
+      this.gridSize = qualityPreset.grassChunkRadius;
+      this.bladesPerChunk = qualityPreset.grassBladesPerChunk;
+      this.bladeSegments = qualityPreset.bladeSegments;
+    }
     for (let i = 0; i < this.gridSize * this.gridSize; i++) {
-      this.chunks.push(new GrassChunk());
+      this.chunks.push(new GrassChunk(this.bladesPerChunk));
     }
     this.initChunks(0, 0);
   }
 
   initChunks(cx: number, cz: number) {
     const range = Math.floor(this.gridSize / 2);
-
     let idx = 0;
     for (let dz = -range; dz <= range; dz++) {
       for (let dx = -range; dx <= range; dx++) {
@@ -182,22 +196,63 @@ export class GrassSystem {
     for (const c of this.chunks) scene.add(c.mesh);
   }
 
+  removeFrom(scene: any) {
+    for (const c of this.chunks) scene.remove(c.mesh);
+  }
+
+  destroy() {
+    for (const c of this.chunks) {
+      c.mesh.removeFromParent?.();
+      c.mesh.geometry.dispose();
+      (c.mesh.material as any).dispose?.();
+    }
+    this.chunks = [];
+  }
+
+  setWindStrength(v: number) {
+    for (const c of this.chunks) {
+      c.windStrengthNode.value = v;
+    }
+  }
+
+  setWetness(v: number) {
+    for (const c of this.chunks) {
+      c.wetnessNode.value = v;
+    }
+  }
+
+  reconfigure(q: QualityPreset, scene: any) {
+    this.removeFrom(scene);
+    this.destroy();
+    this.gridSize = q.grassChunkRadius;
+    this.bladesPerChunk = q.grassBladesPerChunk;
+    this.bladeSegments = q.bladeSegments;
+    for (let i = 0; i < this.gridSize * this.gridSize; i++) {
+      this.chunks.push(new GrassChunk(this.bladesPerChunk));
+    }
+    this.initChunks(0, 0);
+    this.addTo(scene);
+  }
+
   update(cameraPos: Vector3) {
     const range = Math.floor(this.gridSize / 2);
-
     const cx = Math.floor(cameraPos.x / this.chunkSize) * this.chunkSize;
     const cz = Math.floor(cameraPos.z / this.chunkSize) * this.chunkSize;
 
+    const t = performance.now() / 1000;
     let idx = 0;
     for (let dz = -range; dz <= range; dz++) {
       for (let dx = -range; dx <= range; dx++) {
         const targetX = cx + dx * this.chunkSize;
         const targetZ = cz + dz * this.chunkSize;
         const chunk = this.chunks[idx];
-        if (Math.abs(chunk.originX - targetX) > 0.1 || Math.abs(chunk.originZ - targetZ) > 0.1) {
+        if (
+          Math.abs(chunk.originX - targetX) > 0.1 ||
+          Math.abs(chunk.originZ - targetZ) > 0.1
+        ) {
           chunk.regenerate(targetX, targetZ);
         }
-        chunk.update(performance.now() / 1000);
+        chunk.update(t);
         idx++;
       }
     }

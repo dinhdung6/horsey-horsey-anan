@@ -19,6 +19,11 @@ export class InputManager {
   private keys = new Set<string>();
   private jumpWasDown = false;
   private sitWasDown = false;
+  private touch = { moveX: 0, moveZ: 0, run: false, jump: false, eat: false };
+
+  setTouchInput(input: typeof this.touch) {
+    this.touch = input;
+  }
 
   attach() {
     document.addEventListener('keydown', this.onKeyDown);
@@ -31,7 +36,7 @@ export class InputManager {
   }
 
   tick() {
-    const jumpDown = this.keys.has('Space');
+    const jumpDown = this.keys.has('Space') || this.touch.jump;
     this.state.jumpPressed = jumpDown && !this.jumpWasDown;
     this.jumpWasDown = jumpDown;
 
@@ -39,8 +44,8 @@ export class InputManager {
     this.state.sitToggle = sitDown && !this.sitWasDown;
     this.sitWasDown = sitDown;
 
-    this.state.eatHeld = this.keys.has('KeyE');
-    this.state.run = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    this.state.eatHeld = this.keys.has('KeyE') || this.touch.eat;
+    this.state.run = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.touch.run;
 
     this.state.moveX = 0;
     this.state.moveZ = 0;
@@ -48,6 +53,8 @@ export class InputManager {
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) this.state.moveX -= 1;
     if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) this.state.moveZ += 1;
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) this.state.moveZ -= 1;
+    this.state.moveX = Math.max(-1, Math.min(1, this.state.moveX + this.touch.moveX));
+    this.state.moveZ = Math.max(-1, Math.min(1, this.state.moveZ + this.touch.moveZ));
   }
 
   private onKeyDown = (e: KeyboardEvent) => {

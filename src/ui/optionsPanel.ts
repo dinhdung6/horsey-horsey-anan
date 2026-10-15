@@ -8,6 +8,7 @@ type OptionsPanelOptions = {
   onQuality: (name: string) => void;
   onSound: (enabled: boolean) => void;
   onAutoWander: (enabled: boolean) => void;
+  onTouchControls: (enabled: boolean) => void;
   accountEmail: string;
   onSignOut: () => Promise<void>;
 };
@@ -59,6 +60,7 @@ export function createOptionsPanel(options: OptionsPanelOptions) {
   addSelect(panel, 'Quality', options.settings.quality, options.qualityNames, options.onQuality);
   addToggle(panel, 'Sound', options.settings.sound, options.onSound);
   addToggle(panel, 'Auto wander', options.settings.autoWander, options.onAutoWander);
+  addToggle(panel, 'Touch controls', options.settings.touchControls, options.onTouchControls);
   const account = document.createElement('div');
   account.className = 'option-row account-row';
   const identity = document.createElement('span');

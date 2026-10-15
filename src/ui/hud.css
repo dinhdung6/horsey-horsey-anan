@@ -156,6 +156,64 @@
 .stamina-icon[data-level="low"] { color: #e27668; }
 .stamina-warning { grid-column: 2; color: #ffd0aa; }
 .stamina-warning:empty { display: none; }
+
+.touch-controls {
+  position: fixed;
+  z-index: 18;
+  inset: auto 0 18px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  padding: 0 22px;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+}
+.touch-controls[hidden] { display: none; }
+.touch-stick {
+  position: relative;
+  width: 142px;
+  height: 142px;
+  border: 2px solid rgba(243,232,205,.42);
+  border-radius: 50%;
+  background: rgba(24,29,22,.38);
+  pointer-events: auto;
+  touch-action: none;
+}
+.touch-stick-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 54px;
+  height: 54px;
+  margin: -27px;
+  border: 1px solid rgba(243,232,205,.7);
+  border-radius: 50%;
+  background: rgba(216,173,101,.72);
+  pointer-events: none;
+}
+.touch-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; pointer-events: auto; }
+.touch-actions button {
+  min-width: 68px;
+  min-height: 60px;
+  border: 1px solid rgba(225,190,122,.5);
+  border-radius: 14px;
+  color: #f3e8cd;
+  background: rgba(24,29,22,.72);
+  font: 600 14px system-ui, sans-serif;
+  touch-action: none;
+  user-select: none;
+}
+.touch-actions .touch-lock { grid-column: 1 / -1; min-height: 42px; }
+.touch-actions .is-active { color: #20251e; background: #d8ad65; }
+@media (max-width: 520px) {
+  .touch-controls { bottom: max(14px, env(safe-area-inset-bottom)); padding: 0 14px; }
+  .touch-stick { width: 126px; height: 126px; }
+  .touch-actions { gap: 7px; }
+  .touch-actions button { min-width: 60px; min-height: 54px; }
+}
+body.has-touch-controls .stamina-hud { top: 82px; bottom: auto; }
+body.has-touch-controls .controls-button { bottom: 170px; }
 .stamina-hud.is-exhausted .stamina-fill { animation: stamina-pulse 1.8s ease-in-out infinite; }
 .stamina-hud.is-shaking { animation: stamina-shake 0.28s ease-in-out; }
 @keyframes stamina-pulse { 50% { opacity: 0.45; } }

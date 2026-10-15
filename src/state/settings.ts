@@ -6,6 +6,7 @@ export type Settings = {
   weather: 'auto' | 'clear' | 'cloudy' | 'rain' | 'night' | 'fog';
   autoWander: boolean;
   sound: boolean;
+  touchControls: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -13,6 +14,7 @@ const DEFAULTS: Settings = {
   weather: 'auto',
   autoWander: false,
   sound: true,
+  touchControls: false,
 };
 
 let cached: Settings | null = null;

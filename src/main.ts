@@ -27,6 +27,7 @@ import { fetchMessages, type Message } from './data/messages';
 import { getOrCreateWorldSeed } from './data/profile';
 import { createLoginScreen } from './ui/login';
 import { createStaminaBar } from './ui/staminaBar';
+import { createTouchControls } from './ui/touchControls';
 import '@fontsource/be-vietnam-pro/600.css';
 import { fetchAchievements, markAchievementRead, resetOwnAchievements, unlockAchievement, type Achievement } from './data/achievements';
 import { createAchievementPanel } from './ui/achievementPanel';
@@ -146,6 +147,7 @@ async function startGame(session: PlayerSession, supabase: SupabaseClient): Prom
   const skyResult = await setupSkyAndFog(scene);
 
   const settings = loadSettings();
+  const touchControls = createTouchControls(input, settings.touchControls);
   const audio = new AudioManager(settings.sound);
   const staminaBar = createStaminaBar();
   const toast = createAchievementToast();
@@ -358,6 +360,11 @@ async function startGame(session: PlayerSession, supabase: SupabaseClient): Prom
       saveSettings(settings);
       autoPilot.setEnabled(enabled);
     },
+    onTouchControls: (enabled) => {
+      settings.touchControls = enabled;
+      saveSettings(settings);
+      touchControls.setEnabled(enabled);
+    },
   });
 
   const loader = new GLTFLoader();
@@ -502,6 +509,7 @@ async function startGame(session: PlayerSession, supabase: SupabaseClient): Prom
   return () => {
     disposed = true;
     input.detach();
+    touchControls.destroy();
     cameraRig?.destroy();
     weather.dispose();
     insects.dispose();

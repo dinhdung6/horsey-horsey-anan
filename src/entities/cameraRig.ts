@@ -21,6 +21,7 @@ export class CameraRig {
   private pitch = 0;
   private yawOffset = 0;
   private isDragging = false;
+  private dragPointerId: number | null = null;
   private lastMX = 0;
   private lastMY = 0;
   private lastDragTime = 0;
@@ -31,16 +32,19 @@ export class CameraRig {
     const r = FOLLOW_OFFSET.length();
     this.pitch = Math.asin(FOLLOW_OFFSET.y / r);
 
-    dom.addEventListener('mousedown', this.onMouseDown);
-    dom.addEventListener('mousemove', this.onMouseMove);
-    dom.addEventListener('mouseup', this.onMouseUp);
+    dom.style.touchAction = 'none';
+    dom.addEventListener('pointerdown', this.onPointerDown);
+    dom.addEventListener('pointermove', this.onPointerMove);
+    dom.addEventListener('pointerup', this.onPointerUp);
+    dom.addEventListener('pointercancel', this.onPointerUp);
     dom.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
   destroy() {
-    this.dom.removeEventListener('mousedown', this.onMouseDown);
-    this.dom.removeEventListener('mousemove', this.onMouseMove);
-    this.dom.removeEventListener('mouseup', this.onMouseUp);
+    this.dom.removeEventListener('pointerdown', this.onPointerDown);
+    this.dom.removeEventListener('pointermove', this.onPointerMove);
+    this.dom.removeEventListener('pointerup', this.onPointerUp);
+    this.dom.removeEventListener('pointercancel', this.onPointerUp);
   }
 
   /** Camera direction yaw relative to +Z, including orbit offset */
@@ -126,16 +130,17 @@ export class CameraRig {
     this.camera.updateProjectionMatrix();
   }
 
-  private onMouseDown = (e: MouseEvent) => {
-    if (e.button === 0 || e.button === 2) {
-      this.isDragging = true;
-      this.lastMX = e.clientX;
-      this.lastMY = e.clientY;
-    }
+  private onPointerDown = (e: PointerEvent) => {
+    if (this.dragPointerId !== null || (e.button !== 0 && e.button !== 2)) return;
+    this.dragPointerId = e.pointerId;
+    this.isDragging = true;
+    this.lastMX = e.clientX;
+    this.lastMY = e.clientY;
+    this.dom.setPointerCapture(e.pointerId);
   };
 
-  private onMouseMove = (e: MouseEvent) => {
-    if (!this.isDragging) return;
+  private onPointerMove = (e: PointerEvent) => {
+    if (!this.isDragging || e.pointerId !== this.dragPointerId) return;
     const dx = e.clientX - this.lastMX;
     const dy = e.clientY - this.lastMY;
     this.lastMX = e.clientX;
@@ -148,7 +153,9 @@ export class CameraRig {
     this.lastDragTime = performance.now() / 1000;
   };
 
-  private onMouseUp = () => {
+  private onPointerUp = (e: PointerEvent) => {
+    if (e.pointerId !== this.dragPointerId) return;
+    this.dragPointerId = null;
     this.isDragging = false;
     this.lastDragTime = performance.now() / 1000;
   };

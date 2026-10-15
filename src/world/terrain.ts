@@ -20,7 +20,7 @@ export function createTerrain(): Mesh {
   geo.computeVertexNormals();
 
   const material = new MeshStandardMaterial({
-    color: 0x4a6e3a,
+    color: 0x29351e,
     roughness: 0.85,
     metalness: 0.0,
   });

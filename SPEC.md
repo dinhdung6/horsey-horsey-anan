@@ -16,7 +16,7 @@ A browser game in the style of "Bò Simulator" (grass.hieunt.site): a 3D horse w
 | Horse character | Third-person, animated: idle, walk, run (gallop), jump, eat grass, sit |
 | Manual control | W A S D move, Shift run, Space jump, plus keys for sit and eat (section 7) |
 | Automatic mode | Horse wanders by itself when idle / when "Auto" is toggled; any key press takes back control |
-| Weather modes | Clear, Cloudy, Rain, Storm, Fog (Snow optional) |
+| Weather modes | Clear, Cloudy, Rain, Night, Fog (Snow optional) |
 | Quality setting | Low / Medium / High / Ultra |
 | Options panel | Weather, Quality, Auto-wander, Sound on/off |
 
@@ -346,8 +346,8 @@ A single `WeatherState` blended over about 3 seconds (all values lerped; never s
 |---|---|---|---|---|---|---|---|
 | Clear | 1.0 | warm sunset | low | 0.4 | 0 | none | — |
 | Cloudy | 0.45 | grey-blue | medium | 0.7 | 0.1 | none | overcast HDRI for IBL, soft shadows |
-| Rain | 0.25 | dark grey | medium-high | 1.0 | 0.8 | rain 1500 streaks | rain loop, grass darker + glossier |
-| Storm | 0.15 | very dark | high | 1.8 | 1.0 | heavy rain | lightning flashes, thunder, grass thrashes |
+| Rain | 0.25 | dark grey | medium-high | 1.0 | 0.8 | rain 3000 streaks at Medium | horse step splashes, grass darker + glossier |
+| Night | — | dark blue | low | 0.3 | 0 | none | fireflies around grass |
 | Fog | 0.35 | pale | very high | 0.2 | 0.3 | none | visibility about 30 m |
 | Snow (optional) | 0.5 | white-blue | medium | 0.5 | — | snow flakes | grass tip colour shifts to white |
 
@@ -355,10 +355,10 @@ A single `WeatherState` blended over about 3 seconds (all values lerped; never s
 - One `InstancedMesh` of thin quads (rain streaks) or small sprites (snow). Instances live in a box (e.g. 40×20×40 m) that follows the camera.
 - Do **all motion in the vertex shader**: `pos = mod(startPos + vec3(wind, -fallSpeed, 0) * time, boxSize) - boxHalf + cameraPos`. No per-frame CPU updates, so tens of thousands of drops are cheap.
 - Rain streaks stretch along the velocity direction; snow drifts with a sine sway. Fade near the box edges.
-- Rain splashes on the ground are optional.
+- Rain splashes appear at alternating horse step positions while the horse is moving on the ground.
 
-### 9.2 Lightning (Storm)
-Random timer (4–12 s): briefly (80–150 ms, double flash) spike ambient light and sky brightness, then play thunder after a delay proportional to a fake distance.
+### 9.2 Night insects
+Small butterflies flutter around grass during the day; fireflies glow around grass at night.
 
 ### 9.3 Wetness
 A `wetness` uniform darkens the grass albedo, lowers roughness, and increases specular highlights on the ground material.
@@ -378,7 +378,7 @@ Defaults to a fixed warm sunset (like the original's mood). Include a simple `ti
 | Pixel ratio cap | 1.0 | 1.25 | 1.5 | 2.0 |
 | Shadows | off | 1024 map, horse only | 2048 | 4096 + softer filter |
 | Wind detail | single wave | 2 layers | 3 layers | 3 + turbulence |
-| Weather particles | 500 | 1500 | 3000 | 6000 |
+| Weather particles | 1000 | 3000 | 6000 | 12000 |
 | Post-processing | none | none | light bloom | bloom + subtle vignette/tone mapping |
 | Horse anti-aliasing | off | on | on | on |
 
@@ -391,7 +391,7 @@ Settings object (persist with `localStorage`, wrapped in try/catch):
 ```ts
 type Settings = {
   quality: 'low' | 'medium' | 'high' | 'ultra';
-  weather: 'clear' | 'cloudy' | 'rain' | 'storm' | 'fog';
+  weather: 'clear' | 'cloudy' | 'rain' | 'night' | 'fog';
   autoWander: boolean;
   sound: boolean;
 };
@@ -413,7 +413,7 @@ Panel (top-right "Options" button, like the original): Quality dropdown, Weather
 10. **Weather**: presets, blending, rain/snow particles, lightning, wetness.
 11. **Quality presets** applied live; auto-quality (optional).
 12. **Options UI**, persisted settings, controls help, touch controls (optional).
-13. **Audio** (optional): footsteps by speed, wind, rain, thunder; Sound toggle.
+13. **Audio** (optional): hoof sounds by speed, wind, rain, night ambience, eating; Sound toggle.
 14. **Polish and deploy**: loading screen with progress, error screen for unsupported browsers, `vite build`, deploy to any static host. README with credits for all assets.
 
 **Acceptance criteria**

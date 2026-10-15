@@ -41,6 +41,10 @@ export class HorseController {
     this.yaw = horse.root.rotation.y;
   }
 
+  get grounded() {
+    return this.isGrounded;
+  }
+
   update(dt: number, input: InputState) {
     const groundY = heightAt(this.pos.x, this.pos.z);
     this.isGrounded = this.pos.y <= groundY + 0.03;

@@ -8,10 +8,14 @@ import { createTerrain, updateTerrain } from './world/terrain';
 import { setupSkyAndFog } from './world/sky';
 import { GrassSystem } from './world/grass';
 import { Weather } from './world/weather';
+import { Insects } from './world/insects';
 import { Horse } from './entities/horse';
 import { HorseController } from './entities/horseController';
 import { CameraRig } from './entities/cameraRig';
 import { AutoPilot } from './entities/autoPilot';
+import { AudioManager } from './audio/audioManager';
+import { createOptionsPanel } from './ui/optionsPanel';
+import './ui/hud.css';
 import { loadSettings, saveSettings } from './state/settings';
 import { QUALITY_PRESETS } from './config/quality';
 import { WEATHER_PRESETS } from './config/weatherPresets';
@@ -45,11 +49,22 @@ async function init() {
   const skyResult = await setupSkyAndFog(scene);
 
   const settings = loadSettings();
+  const audio = new AudioManager(settings.sound);
+  let automaticWeather = settings.weather === 'auto';
+  let isNight = false;
+  let activeWeather: keyof typeof WEATHER_PRESETS =
+    settings.weather === 'auto' ? 'clear' : settings.weather;
+  let weatherChangeTimer = 120;
+  let dayNightTimer = 300;
+  const initialWeather = automaticWeather ? 'clear' : settings.weather;
+  audio.setWeather(initialWeather);
   const quality: QualityPreset =
     QUALITY_PRESETS[settings.quality] ?? QUALITY_PRESETS.medium;
 
   const grassSystem = new GrassSystem(quality);
   grassSystem.addTo(scene);
+  const insects = new Insects(grassSystem, scene);
+  insects.setNight(initialWeather === 'night');
 
   renderer.shadowMap.enabled = true;
 
@@ -62,7 +77,7 @@ async function init() {
     quality,
     skyResult.hdris
   );
-  weather.setPreset(settings.weather);
+  weather.setPreset(initialWeather);
 
   function setShadowMapSize(sun: any, size: number) {
     if (sun.shadow.map) {
@@ -97,6 +112,80 @@ async function init() {
   let controller: HorseController | null = null;
   let cameraRig: CameraRig | null = null;
   const autoPilot = new AutoPilot();
+  autoPilot.setEnabled(settings.autoWander);
+
+  function setWeather(name: string) {
+    if (name === 'auto') {
+      automaticWeather = true;
+      isNight = false;
+      weatherChangeTimer = 120;
+      dayNightTimer = 300;
+      settings.weather = 'auto';
+    } else if (WEATHER_PRESETS[name]) {
+      automaticWeather = false;
+      settings.weather = name as typeof settings.weather;
+    } else {
+      return;
+    }
+    applyWeather(name === 'auto' ? 'clear' : name as keyof typeof WEATHER_PRESETS);
+    saveSettings(settings);
+  }
+
+  function applyWeather(name: keyof typeof WEATHER_PRESETS) {
+    activeWeather = name;
+    weather.setPreset(name);
+    insects.setNight(name === 'night');
+    audio.setWeather(name);
+  }
+
+  function updateAutomaticWeather(dt: number) {
+    if (!automaticWeather) return;
+    dayNightTimer -= dt;
+    if (dayNightTimer <= 0) {
+      isNight = !isNight;
+      dayNightTimer += 300;
+      if (isNight) {
+        applyWeather('night');
+      } else {
+        weatherChangeTimer = 120;
+        applyWeather('clear');
+      }
+    }
+    if (!isNight) weatherChangeTimer -= dt;
+    if (!isNight && weatherChangeTimer <= 0) {
+      const transient = (['cloudy', 'rain', 'fog'] as const)
+        .filter((name) => name !== activeWeather);
+      const name = transient[Math.floor(Math.random() * transient.length)];
+      weatherChangeTimer += 120;
+      applyWeather(name);
+    }
+  }
+
+  function setQuality(name: string) {
+    const preset = QUALITY_PRESETS[name];
+    if (!preset) return;
+    applyQualityPreset(preset);
+    settings.quality = name as typeof settings.quality;
+    saveSettings(settings);
+  }
+
+  const destroyOptionsPanel = createOptionsPanel({
+    settings,
+    weatherNames: ['auto', ...Object.keys(WEATHER_PRESETS)],
+    qualityNames: Object.keys(QUALITY_PRESETS),
+    onWeather: setWeather,
+    onQuality: setQuality,
+    onSound: (enabled) => {
+      settings.sound = enabled;
+      saveSettings(settings);
+      audio.setEnabled(enabled);
+    },
+    onAutoWander: (enabled) => {
+      settings.autoWander = enabled;
+      saveSettings(settings);
+      autoPilot.setEnabled(enabled);
+    },
+  });
 
   const loader = new GLTFLoader();
   loader.load(
@@ -127,6 +216,7 @@ async function init() {
     camera,
     (dt) => {
       input.tick();
+      updateAutomaticWeather(dt);
       weather.update(dt, camera.position);
 
       if (controller && cameraRig) {
@@ -168,6 +258,23 @@ async function init() {
         grassSystem.update(camera.position);
       }
 
+      weather.updateHorseSplashes(dt, controller ? {
+        x: controller.horse.root.position.x,
+        z: controller.horse.root.position.z,
+        yaw: controller.yaw,
+        speed: controller.speed,
+        grounded: controller.grounded,
+      } : undefined);
+
+      audio.update(dt, {
+        speed: controller?.speed ?? 0,
+        grounded: controller?.grounded ?? false,
+        eating: controller?.eating ?? false,
+        sitting: controller?.sitting ?? false,
+      });
+
+      insects.update(weather.time);
+
       horse?.update(dt);
     },
     fpsEl
@@ -179,14 +286,17 @@ async function init() {
       input.detach();
       cameraRig?.destroy();
       weather.dispose();
+      insects.dispose();
+      audio.dispose();
+      destroyOptionsPanel();
       stopLoop();
     });
   }
 
-  // ponytail: console helpers for testing weather/quality until milestone-12 UI arrives
+  // ponytail: console helpers for weather and quality
   (window as any).horseSim = {
     setWeather: (name: string) => {
-      if (!WEATHER_PRESETS[name]) {
+      if (name !== 'auto' && !WEATHER_PRESETS[name]) {
         console.warn(
           'Unknown weather:',
           name,
@@ -195,14 +305,11 @@ async function init() {
         );
         return;
       }
-      weather.setPreset(name);
-      settings.weather = name as any;
-      saveSettings(settings);
+      setWeather(name);
       console.log('Weather set to', name);
     },
     setQuality: (name: string) => {
-      const q = QUALITY_PRESETS[name];
-      if (!q) {
+      if (!QUALITY_PRESETS[name]) {
         console.warn(
           'Unknown quality:',
           name,
@@ -211,9 +318,7 @@ async function init() {
         );
         return;
       }
-      applyQualityPreset(q);
-      settings.quality = name as any;
-      saveSettings(settings);
+      setQuality(name);
       console.log('Quality set to', name);
     },
     weather,

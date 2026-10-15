@@ -39,6 +39,7 @@ export class GrassChunk {
   horsePosNode = uniform(new Vector3(0, -999, 0));
   windStrengthNode = uniform(0.3);
   wetnessNode = uniform(0.0);
+  brightnessNode = uniform(1.0);
   bladesPerChunk: number;
   bitePosXZNodes: any[] = [];
   biteTimeNodes: any[] = [];
@@ -68,9 +69,9 @@ export class GrassChunk {
 
     const rootColor = vec3(0.08, 0.18, 0.05);
     const tipColor = vec3(0.55, 0.75, 0.25);
-    const colorNode = mix(rootColor, tipColor, pow(bladeT, float(1.3))).mul(
-      wetnessDarken
-    );
+    const colorNode = mix(rootColor, tipColor, pow(bladeT, float(1.3)))
+      .mul(wetnessDarken)
+      .mul(this.brightnessNode);
 
     const groundY = sin(positionLocal.x.mul(0.04)).mul(1.2)
       .add(cos(positionLocal.z.mul(0.035)))
@@ -219,6 +220,10 @@ export class GrassSystem {
     for (const c of this.chunks) {
       c.wetnessNode.value = v;
     }
+  }
+
+  setBrightness(v: number) {
+    for (const c of this.chunks) c.brightnessNode.value = v;
   }
 
   reconfigure(q: QualityPreset, scene: any) {

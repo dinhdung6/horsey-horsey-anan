@@ -11,6 +11,9 @@ import {
   Object3D,
   DoubleSide,
   MeshBasicNodeMaterial,
+  MeshBasicMaterial,
+  RingGeometry,
+  SphereGeometry,
 } from 'three/webgpu';
 import {
   uniform,
@@ -26,12 +29,15 @@ import { WEATHER_PRESETS, WeatherPresetData } from '../config/weatherPresets';
 import { QualityPreset } from '../config/quality';
 import { GrassSystem } from './grass';
 import { HDRIs } from './sky';
+import { heightAt } from './terrain';
 
-const MAX_PARTICLES = 6000;
+const MAX_PARTICLES = 12000;
+const MAX_SPLASH_EVENTS = 12;
+const DROPLETS_PER_SPLASH = 6;
 const TRANSITION_DURATION = 3.0;
 const LIGHTNING_MIN_INTERVAL = 4.0;
 const LIGHTNING_MAX_INTERVAL = 12.0;
-const BASE_GROUND_HEX = 0x4a6e3a;
+const BASE_GROUND_HEX = 0x29351e;
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -57,6 +63,22 @@ function tslHash(seed: any) {
 function wrapVal(val: any, size: any) {
   return val.sub(floor(val.div(size)).mul(size));
 }
+
+type HorseSplashState = {
+  x: number;
+  z: number;
+  yaw: number;
+  speed: number;
+  grounded: boolean;
+};
+
+type SplashEvent = {
+  x: number;
+  y: number;
+  z: number;
+  age: number;
+  droplets: Array<{ x: number; y: number; z: number }>;
+};
 
 class WeatherValues {
   sunIntensity = 0;
@@ -139,8 +161,8 @@ class WeatherValues {
 const HDRI_MAP: Record<string, keyof HDRIs> = {
   clear: 'sunset',
   cloudy: 'overcast',
-  rain: 'night',
-  storm: 'night',
+  rain: 'overcast',
+  night: 'night',
   fog: 'mistyMorning',
 };
 
@@ -169,6 +191,12 @@ export class Weather {
   rainCamNode = uniform(new Vector3());
   rainWindNode = uniform(new Vector3(0.5, 0, 0.1));
   maxParticles = 1500;
+  private splashRings: InstancedMesh | null = null;
+  private splashDroplets: InstancedMesh | null = null;
+  private splashEvents: SplashEvent[] = [];
+  private readonly splashDummy = new Object3D();
+  private splashDistance = 0;
+  private stepSide = 1;
 
   constructor(
     sun: DirectionalLight,
@@ -232,7 +260,7 @@ export class Weather {
   applyToScene() {
     this.sun.intensity = this.current.sunIntensity;
     this.sun.color.copy(this.current.sunColor);
-    this.ambient.intensity = this.baseAmbientIntensity;
+    this.ambient.intensity = this.current.ambientIntensity;
     this.ambient.color.copy(this.current.ambientColor);
     if (this.scene.fog) {
       (this.scene.fog as any).color.copy(this.current.fogColor);
@@ -260,6 +288,7 @@ export class Weather {
     this.groundMat.roughness = clampNum(0.85 - w * 0.4, 0.1, 0.85);
     this.grassSystem.setWindStrength(this.current.windStrength);
     this.grassSystem.setWetness(this.current.wetness);
+    this.grassSystem.setBrightness(0.45 + 0.55 * Math.min(1, this.current.sunIntensity / 0.6));
   }
 
   createRainSystem() {
@@ -358,6 +387,109 @@ export class Weather {
     this.rainMesh.count = target;
   }
 
+  updateHorseSplashes(dt: number, horse?: HorseSplashState) {
+    const raining = this.current.precipitation !== 'none';
+    if (raining && horse?.grounded && Math.abs(horse.speed) > 0.35) {
+      this.splashDistance += Math.abs(horse.speed) * dt;
+      const stepDistance = Math.abs(horse.speed) > 4 ? 1.4 : 0.65;
+      while (this.splashDistance >= stepDistance) {
+        this.splashDistance -= stepDistance;
+        this.addHorseSplash(horse);
+      }
+    } else {
+      this.splashDistance = 0;
+    }
+
+    for (let i = this.splashEvents.length - 1; i >= 0; i--) {
+      this.splashEvents[i].age += dt;
+      if (this.splashEvents[i].age >= 0.55) this.splashEvents.splice(i, 1);
+    }
+    this.updateSplashMeshes();
+  }
+
+  private addHorseSplash(horse: HorseSplashState) {
+    if (!this.splashRings || !this.splashDroplets) this.createSplashMeshes();
+    const side = this.stepSide * 0.32;
+    this.stepSide *= -1;
+    const x = horse.x + Math.cos(horse.yaw) * side;
+    const z = horse.z - Math.sin(horse.yaw) * side;
+    const event: SplashEvent = {
+      x,
+      y: heightAt(x, z) + 0.035,
+      z,
+      age: 0,
+      droplets: Array.from({ length: DROPLETS_PER_SPLASH }, () => {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 0.2 + Math.random() * 0.55;
+        return {
+          x: Math.cos(angle) * speed,
+          y: 0.55 + Math.random() * 0.85,
+          z: Math.sin(angle) * speed,
+        };
+      }),
+    };
+    this.splashEvents.push(event);
+    if (this.splashEvents.length > MAX_SPLASH_EVENTS) this.splashEvents.shift();
+  }
+
+  private createSplashMeshes() {
+    this.splashRings = new InstancedMesh(
+      new RingGeometry(0.045, 0.15, 20),
+      new MeshBasicMaterial({ color: 0x7899a0, transparent: true, opacity: 0.28, depthWrite: false }),
+      MAX_SPLASH_EVENTS
+    );
+    const ringPositions = this.splashRings.geometry.getAttribute('position');
+    for (let i = 0; i < ringPositions.count; i++) {
+      const x = ringPositions.getX(i);
+      const y = ringPositions.getY(i);
+      const angle = Math.atan2(y, x);
+      const irregularity = 1 + 0.07 * Math.sin(angle * 3) + 0.035 * Math.sin(angle * 7);
+      ringPositions.setXY(i, x * irregularity, y * irregularity);
+    }
+    ringPositions.needsUpdate = true;
+    this.splashDroplets = new InstancedMesh(
+      new SphereGeometry(0.018, 5, 4),
+      new MeshBasicMaterial({ color: 0xa8c5cc, transparent: true, opacity: 0.58, depthWrite: false }),
+      MAX_SPLASH_EVENTS * DROPLETS_PER_SPLASH
+    );
+    this.splashRings.frustumCulled = false;
+    this.splashDroplets.frustumCulled = false;
+    this.scene.add(this.splashRings, this.splashDroplets);
+  }
+
+  private updateSplashMeshes() {
+    if (!this.splashRings || !this.splashDroplets) return;
+    const dummy = this.splashDummy;
+    let dropletIndex = 0;
+    this.splashRings.count = this.splashEvents.length;
+    for (let i = 0; i < this.splashEvents.length; i++) {
+      const event = this.splashEvents[i];
+      const progress = event.age / 0.55;
+      dummy.position.set(event.x, event.y, event.z);
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.setScalar(0.2 + progress * 1.8);
+      dummy.updateMatrix();
+      this.splashRings.setMatrixAt(i, dummy.matrix);
+
+      for (const velocity of event.droplets) {
+        const t = event.age;
+        dummy.position.set(
+          event.x + velocity.x * t,
+          event.y + velocity.y * t - 2.5 * t * t,
+          event.z + velocity.z * t
+        );
+        const size = Math.max(0, 1 - progress);
+        dummy.scale.set(0.65 * size, 1.5 * size, 0.65 * size);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        this.splashDroplets.setMatrixAt(dropletIndex++, dummy.matrix);
+      }
+    }
+    this.splashDroplets.count = dropletIndex;
+    this.splashRings.instanceMatrix.needsUpdate = true;
+    this.splashDroplets.instanceMatrix.needsUpdate = true;
+  }
+
   updateLightning(dt: number) {
     if (!this.current.lightning) {
       this.lightningFlashRemaining = 0;
@@ -398,6 +530,14 @@ export class Weather {
       (this.rainMesh.material as any).dispose?.();
       this.rainMesh = null;
     }
+    for (const mesh of [this.splashRings, this.splashDroplets]) {
+      if (!mesh) continue;
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+      (mesh.material as MeshBasicMaterial).dispose();
+    }
+    this.splashRings = null;
+    this.splashDroplets = null;
   }
 }
 

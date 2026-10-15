@@ -52,6 +52,7 @@ export class InputManager {
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.repeat) return;
+    if ((e.target as HTMLElement).closest?.('#options-panel, #controls-panel')) return;
     this.keys.add(e.code);
   };
 

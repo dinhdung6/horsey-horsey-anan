@@ -9,6 +9,14 @@ export class AutoPilot {
   private isActive = false;
   private noInputTimer = 0;
   private runMode = false;
+  private enabled = false;
+
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    this.isActive = false;
+    this.mode = 'idle';
+    this.noInputTimer = enabled ? 8 : 0;
+  }
 
   update(dt: number, horseX: number, horseZ: number, horseYaw: number, input: InputState): InputState {
     if (input.moveX !== 0 || input.moveZ !== 0 || input.jumpPressed || input.sitToggle || input.eatHeld) {
@@ -19,6 +27,8 @@ export class AutoPilot {
       }
       return input;
     }
+
+    if (!this.enabled) return input;
 
     this.noInputTimer += dt;
 

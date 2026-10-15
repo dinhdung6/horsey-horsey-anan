@@ -10,7 +10,9 @@ import {
   GRAVITY,
   COYOTE_TIME,
 } from '../config/controller';
+import { STAMINA } from '../config/stamina';
 import { Horse } from './horse';
+import { Stamina } from './stamina';
 import type { InputState } from '../engine/input';
 
 function damp(current: number, target: number, lambda: number, dt: number): number {
@@ -26,6 +28,7 @@ export class HorseController {
   private tiltPitch = 0;
   private tiltRoll = 0;
   readonly horse: Horse;
+  readonly stamina = new Stamina();
   yaw = 0;
   pos = { x: 0, y: 0, z: 0 };
   frameBite: { x: number; z: number } | null = null;
@@ -84,7 +87,11 @@ export class HorseController {
       this.isGrounded = false;
       this.verticalVel = JUMP_VELOCITY;
       this.eating = false;
+      this.stamina.consume(STAMINA.jumpCost);
     }
+
+    const galloping = input.run && this.stamina.canGallop && input.moveZ > 0 && this.speed > WALK_SPEED && this.isGrounded;
+    this.stamina.update(dt, galloping, this.eating, this.isGrounded, Math.abs(this.speed) <= 0.2);
 
     // ── Horizontal movement ──
     let targetSpeed = 0;
@@ -94,14 +101,15 @@ export class HorseController {
       targetSpeed = 0;
     } else {
       if (input.moveZ > 0) {
-        targetSpeed = input.run ? RUN_SPEED : WALK_SPEED;
-        turnRate = input.run ? TURN_RATE_RUN : TURN_RATE_WALK;
+        const run = input.run && this.stamina.canGallop;
+        targetSpeed = run ? RUN_SPEED : WALK_SPEED;
+        turnRate = run ? TURN_RATE_RUN : TURN_RATE_WALK;
       } else if (input.moveZ < 0) {
         targetSpeed = -REVERSE_SPEED;
       }
     }
 
-    this.speed = damp(this.speed, targetSpeed, 1.0 / ACCEL_TIME, dt);
+    this.speed = damp(this.speed, targetSpeed, this.stamina.exhausted ? 3 / STAMINA.exhaustedDecelTime : 1.0 / ACCEL_TIME, dt);
 
     // Yaw steering (only when not eating/sitting)
     if (!this.sitting && !this.eating) {

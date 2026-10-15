@@ -1,7 +1,7 @@
 // src/main.ts
 import { Scene, PerspectiveCamera, Box3 } from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createRenderer, getBackendName } from './engine/renderer';
+import { createRenderer, disposeRenderer, getBackendName } from './engine/renderer';
 import { startLoop } from './engine/loop';
 import { InputManager } from './engine/input';
 import { createTerrain, updateTerrain } from './world/terrain';
@@ -20,8 +20,105 @@ import { loadSettings, saveSettings } from './state/settings';
 import { QUALITY_PRESETS } from './config/quality';
 import { WEATHER_PRESETS } from './config/weatherPresets';
 import type { QualityPreset } from './config/quality';
+import type { SupabaseClient, User } from '@supabase/supabase-js';
+import { createSupabaseClient } from './lib/supabase';
+import { restoreSession, signOut, submitAuth, watchAuth } from './auth/auth';
+import { fetchMessages, type Message } from './data/messages';
+import { getOrCreateWorldSeed } from './data/profile';
+import { createLoginScreen } from './ui/login';
+import { createStaminaBar } from './ui/staminaBar';
+import '@fontsource/be-vietnam-pro/600.css';
+import { fetchAchievements, markAchievementRead, resetOwnAchievements, unlockAchievement, type Achievement } from './data/achievements';
+import { createAchievementPanel } from './ui/achievementPanel';
+import { createAchievementToast } from './ui/achievementToast';
+import { MessageBoards } from './world/messageBoards';
+
+type PlayerSession = { userId: string; email: string; worldSeed: number; messages: Message[]; achievements: Achievement[] };
 
 async function init() {
+  let supabase: SupabaseClient | null = null;
+  const loginScreen = createLoginScreen({
+    onSubmit: (mode, email, password) => {
+      if (!supabase) throw new Error('Set the Supabase values in .env and restart the dev server.');
+      return submitAuth(supabase, mode, email, password);
+    },
+  });
+  loginScreen.show('Checking your session…');
+
+  try {
+    supabase = createSupabaseClient();
+  } catch (error) {
+    loginScreen.setStatus(error instanceof Error ? error.message : 'Supabase configuration is missing.', true);
+    return;
+  }
+
+  let session: PlayerSession | null = null;
+  let stopGame: (() => void) | null = null;
+  let requestedUserId: string | null | undefined;
+  let authRevision = 0;
+
+  async function enterUser(user: User | null) {
+    const userId = user?.id ?? null;
+    if (userId === requestedUserId) return;
+    requestedUserId = userId;
+    const revision = ++authRevision;
+    stopGame?.();
+    stopGame = null;
+    session = null;
+    delete (window as any).horseSim;
+
+    if (!user) {
+      loginScreen.show();
+      return;
+    }
+
+    loginScreen.show('Loading your messages and player profile…');
+    try {
+      const [messages, worldSeed, achievements] = await Promise.all([
+        fetchMessages(supabase!),
+        getOrCreateWorldSeed(supabase!, user.id),
+        fetchAchievements(supabase!, user.id),
+      ]);
+      if (revision !== authRevision) return;
+      session = { userId: user.id, email: user.email ?? 'Signed in player', worldSeed, messages, achievements };
+      console.info(`Loaded ${messages.length} active messages for the signed-in player.`);
+      const cleanup = await startGame(session, supabase!);
+      if (revision !== authRevision) {
+        cleanup();
+        return;
+      }
+      stopGame = cleanup;
+      loginScreen.hide();
+    } catch (error) {
+      if (revision !== authRevision) return;
+      requestedUserId = null;
+      session = null;
+      loginScreen.show();
+      loginScreen.setStatus(
+        error instanceof Error ? `Could not load player data: ${error.message}` : 'Could not load player data. Check the connection and try again.',
+        true
+      );
+    }
+  }
+
+  const unsubscribe = watchAuth(supabase, (user) => { void enterUser(user); });
+  try {
+    await enterUser(await restoreSession(supabase));
+  } catch (error) {
+    loginScreen.show();
+    loginScreen.setStatus(error instanceof Error ? error.message : 'Could not restore the sign-in session.', true);
+  }
+
+  const viteHot = (import.meta as any).hot;
+  viteHot?.dispose(() => {
+    unsubscribe();
+    stopGame?.();
+    loginScreen.destroy();
+  });
+}
+
+async function startGame(session: PlayerSession, supabase: SupabaseClient): Promise<() => void> {
+  await document.fonts.load('600 48px "Be Vietnam Pro"');
   const container = document.getElementById('canvas-container')!;
   const fpsEl = document.getElementById('fps-counter')!;
   const gpuEl = document.getElementById('gpu-message')!;
@@ -50,6 +147,24 @@ async function init() {
 
   const settings = loadSettings();
   const audio = new AudioManager(settings.sound);
+  const staminaBar = createStaminaBar();
+  const toast = createAchievementToast();
+  let achievements = [...session.achievements];
+  const pendingUnlocks = new Set<number>();
+  let achievementPanel: ReturnType<typeof createAchievementPanel>;
+  let messageBoards: MessageBoards;
+  let disposed = false;
+  achievementPanel = createAchievementPanel(session.messages, achievements, async (messageId) => {
+    await markAchievementRead(supabase, session.userId, messageId);
+    achievements = achievements.map((item) => item.messageId === messageId
+      ? { ...item, readAt: new Date().toISOString() }
+      : item);
+  }, async () => {
+    await resetOwnAchievements(supabase);
+    achievements = [];
+    messageBoards.setCollected([]);
+    achievementPanel.setAchievements(achievements);
+  });
   let automaticWeather = settings.weather === 'auto';
   let isNight = false;
   let activeWeather: keyof typeof WEATHER_PRESETS =
@@ -63,6 +178,60 @@ async function init() {
 
   const grassSystem = new GrassSystem(quality);
   grassSystem.addTo(scene);
+  const query = new URLSearchParams(location.search);
+  const seedParam = import.meta.env.DEV ? query.get('seed') : null;
+  const seedOverride = seedParam !== null && /^\d+$/.test(seedParam) && Number(seedParam) <= 0xffffffff
+    ? Number(seedParam)
+    : null;
+  const boardSeed = seedOverride ?? session.worldSeed;
+  const nearBoardTest = import.meta.env.DEV && query.get('debugBoards') === '1' && query.get('boardNear') === '1';
+  const nearbyBoardId = nearBoardTest
+    ? session.messages.find((message) => !achievements.some((item) => item.messageId === message.id))?.id ?? session.messages[0]?.id
+    : undefined;
+  messageBoards = new MessageBoards(scene, grassSystem, renderer, boardSeed, session.messages, async (placement) => {
+    if (disposed || pendingUnlocks.has(placement.id) || achievements.some((item) => item.messageId === placement.id)) return;
+    pendingUnlocks.add(placement.id);
+    try {
+      const unlocked = await unlockAchievement(supabase, session.userId, placement.id);
+      if (disposed) return;
+      if (!unlocked) {
+        achievements = await fetchAchievements(supabase, session.userId);
+        if (disposed) return;
+        achievementPanel.setAchievements(achievements);
+        messageBoards.setCollected(achievements.map((item) => item.messageId));
+        return;
+      }
+      achievements = [...achievements, unlocked].sort((a, b) => a.discoveredAt.localeCompare(b.discoveredAt)
+        || a.messageId - b.messageId);
+      achievementPanel.setAchievements(achievements);
+      messageBoards.setCollected(achievements.map((item) => item.messageId));
+      toast.discovery(achievements.length, session.messages.length, placement.text);
+      audio.playAchievementChime([1, 10, 25, 50].includes(achievements.length));
+    } catch (error) {
+      console.error('Could not save message discovery:', error);
+      if (!disposed) toast.error();
+    } finally {
+      pendingUnlocks.delete(placement.id);
+    }
+  }, nearbyBoardId);
+  messageBoards.setCollected(achievements.map((item) => item.messageId));
+  messageBoards.setNight(settings.weather === 'night');
+  const boardDebug = import.meta.env.DEV && query.get('debugBoards') === '1'
+    ? document.createElement('pre')
+    : null;
+  if (boardDebug) {
+    boardDebug.className = 'board-debug';
+    document.body.append(boardDebug);
+  }
+  function updateBoardDebug() {
+    if (!boardDebug) return;
+    const active = messageBoards.activePlacement;
+    const activeText = active
+      ? `Active: #${active.id} at chunk ${active.chunkX},${active.chunkZ}`
+      : 'Active: none (waiting for a new 10×10-chunk square)';
+    boardDebug.textContent = `Seed ${boardSeed}${seedOverride === null ? ' (database)' : ' (debug override)'} · ${messageBoards.placements.length} messages · ${messageBoards.loadedCount} loaded${nearBoardTest ? ' · NEAR-SPAWN TEST' : ''}\n${activeText}`;
+  }
+  updateBoardDebug();
   const insects = new Insects(grassSystem, scene);
   insects.setNight(initialWeather === 'night');
 
@@ -111,6 +280,7 @@ async function init() {
   let horse: Horse | null = null;
   let controller: HorseController | null = null;
   let cameraRig: CameraRig | null = null;
+  let runWasDown = false;
   const autoPilot = new AutoPilot();
   autoPilot.setEnabled(settings.autoWander);
 
@@ -135,6 +305,7 @@ async function init() {
     activeWeather = name;
     weather.setPreset(name);
     insects.setNight(name === 'night');
+    messageBoards.setNight(name === 'night');
     audio.setWeather(name);
   }
 
@@ -171,6 +342,8 @@ async function init() {
 
   const destroyOptionsPanel = createOptionsPanel({
     settings,
+    accountEmail: session.email,
+    onSignOut: () => signOut(supabase),
     weatherNames: ['auto', ...Object.keys(WEATHER_PRESETS)],
     qualityNames: Object.keys(QUALITY_PRESETS),
     onWeather: setWeather,
@@ -191,6 +364,7 @@ async function init() {
   loader.load(
     '/models/horse.glb',
     (gltf) => {
+      if (disposed) return;
       console.log(
         'Horse animations:',
         gltf.animations.map((a: any) => a.name)
@@ -216,8 +390,11 @@ async function init() {
     camera,
     (dt) => {
       input.tick();
+      if (input.state.run && !runWasDown && controller?.stamina.exhausted) staminaBar.shake();
+      runWasDown = input.state.run;
       updateAutomaticWeather(dt);
       weather.update(dt, camera.position);
+      messageBoards.setWetness(weather.current.wetness);
 
       if (controller && cameraRig) {
         const autoInput = autoPilot.update(
@@ -225,9 +402,17 @@ async function init() {
           controller.horse.root.position.x,
           controller.horse.root.position.z,
           controller.yaw,
-          input.state
+          input.state,
+          controller.stamina.value,
+          controller.eating
         );
         controller.update(dt, autoInput);
+        staminaBar.update(
+          controller.stamina.value,
+          controller.stamina.exhausted,
+          controller.grounded && Math.abs(controller.speed) < 0.2 && !controller.eating && !controller.sitting,
+          dt
+        );
 
         cameraRig.update(
           dt,
@@ -242,6 +427,7 @@ async function init() {
           controller.horse.root.position.z
         );
 
+        if (messageBoards.update(controller.horse.root.position.x, controller.horse.root.position.z, controller.yaw)) updateBoardDebug();
         grassSystem.update(camera.position);
         grassSystem.setHorsePos(
           controller.horse.root.position.x,
@@ -280,19 +466,6 @@ async function init() {
     fpsEl
   );
 
-  const viteHot = (import.meta as any).hot;
-  if (viteHot) {
-    viteHot.dispose(() => {
-      input.detach();
-      cameraRig?.destroy();
-      weather.dispose();
-      insects.dispose();
-      audio.dispose();
-      destroyOptionsPanel();
-      stopLoop();
-    });
-  }
-
   // ponytail: console helpers for weather and quality
   (window as any).horseSim = {
     setWeather: (name: string) => {
@@ -323,6 +496,32 @@ async function init() {
     },
     weather,
     grassSystem,
+    messageBoards,
+  };
+
+  return () => {
+    disposed = true;
+    input.detach();
+    cameraRig?.destroy();
+    weather.dispose();
+    insects.dispose();
+    messageBoards.destroy();
+    grassSystem.destroy();
+    audio.dispose();
+    staminaBar.destroy();
+    achievementPanel.destroy();
+    toast.destroy();
+    boardDebug?.remove();
+    destroyOptionsPanel();
+    stopLoop();
+    scene.background = null;
+    scene.environment = null;
+    for (const texture of Object.values(skyResult.hdris)) texture.dispose?.();
+    (terrain.material as any).map?.dispose?.();
+    terrain.geometry.dispose();
+    (terrain.material as any).dispose?.();
+    disposeRenderer(renderer);
+    gpuEl.textContent = '';
   };
 }
 

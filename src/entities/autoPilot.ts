@@ -18,7 +18,7 @@ export class AutoPilot {
     this.noInputTimer = enabled ? 8 : 0;
   }
 
-  update(dt: number, horseX: number, horseZ: number, horseYaw: number, input: InputState): InputState {
+  update(dt: number, horseX: number, horseZ: number, horseYaw: number, input: InputState, stamina: number, horseEating: boolean): InputState {
     if (input.moveX !== 0 || input.moveZ !== 0 || input.jumpPressed || input.sitToggle || input.eatHeld) {
       this.noInputTimer = 0;
       if (this.isActive) {
@@ -46,7 +46,7 @@ export class AutoPilot {
         this.mode = Math.random() < 0.3 ? 'eating' : 'walking';
         if (this.mode === 'walking') {
           this.pickNewTarget(horseX, horseZ);
-          this.runMode = Math.random() < 0.2;
+          this.runMode = stamina > 50 && Math.random() < 0.2;
           this.timer = 999;
         } else {
           this.timer = 3 + Math.random() * 5;
@@ -55,8 +55,16 @@ export class AutoPilot {
         const rnd = Math.random();
         if (rnd < 0.4) { this.mode = 'idle'; this.timer = 2 + Math.random() * 4; }
         else if (rnd < 0.8) { this.mode = 'eating'; this.timer = 3 + Math.random() * 5; }
-        else { this.mode = 'walking'; this.pickNewTarget(horseX, horseZ); this.runMode = Math.random() < 0.2; this.timer = 999; }
+        else { this.mode = 'walking'; this.pickNewTarget(horseX, horseZ); this.runMode = stamina > 50 && Math.random() < 0.2; this.timer = 999; }
       }
+    }
+
+    if (stamina < 25 && !horseEating) {
+      this.mode = 'eating';
+      this.timer = 999;
+    } else if (this.mode === 'eating' && horseEating && stamina >= 80) {
+      this.mode = 'idle';
+      this.timer = 0;
     }
 
     const out: InputState = { moveX: 0, moveZ: 0, jumpPressed: false, run: false, sitToggle: false, eatHeld: false };
@@ -71,7 +79,7 @@ export class AutoPilot {
       diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
       out.moveZ = 1;
       out.moveX = Math.sign(diff) * Math.min(Math.abs(diff) / 1.5, 1);
-      out.run = this.runMode;
+      out.run = this.runMode && stamina > 50;
     } else if (this.mode === 'eating') {
       out.eatHeld = true;
     }

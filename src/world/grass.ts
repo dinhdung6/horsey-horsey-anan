@@ -30,6 +30,8 @@ const BITE_CAPACITY = 8;
 const BITE_RADIUS = 0.6;
 const BITE_REGROW = 30.0;
 const HORSE_PUSH_RADIUS = 1.2;
+const BOARD_EXCLUSION_RADIUS = 2;
+const BOARD_EXCLUSION_TIME = 1e9;
 
 export class GrassChunk {
   mesh: InstancedMesh;
@@ -43,13 +45,18 @@ export class GrassChunk {
   bladesPerChunk: number;
   bitePosXZNodes: any[] = [];
   biteTimeNodes: any[] = [];
+  biteRadiusNodes: any[] = [];
+  biteMinScaleNodes: any[] = [];
   biteWriteIndex = 0;
+  private exclusionCount = 0;
 
   constructor(bladesPerChunk = 5000) {
     this.bladesPerChunk = bladesPerChunk;
     for (let i = 0; i < BITE_CAPACITY; i++) {
       this.bitePosXZNodes.push(uniform(new Vector2(0, 0)));
       this.biteTimeNodes.push(uniform(-999));
+      this.biteRadiusNodes.push(uniform(BITE_RADIUS));
+      this.biteMinScaleNodes.push(uniform(0.2));
     }
 
     const geo = new BufferGeometry();
@@ -96,10 +103,10 @@ export class GrassChunk {
       const bdz = positionLocal.z.sub(bpz);
       const bDistSq = bdx.mul(bdx).add(bdz.mul(bdz));
       const bDist = pow(bDistSq, 0.5);
-      const near = smoothstep(BITE_RADIUS, 0.0, bDist);
+      const near = smoothstep(this.biteRadiusNodes[i], 0.0, bDist);
       const elapsed = this.timeNode.sub(this.biteTimeNodes[i]);
       const regrow = clamp(elapsed.mul(1.0 / BITE_REGROW), 0.0, 1.0);
-      const targetScale = mix(0.2, 1.0, regrow);
+      const targetScale = mix(this.biteMinScaleNodes[i], 1.0, regrow);
       const scaleHere = mix(1.0, targetScale, near);
       biteScale = min(biteScale, scaleHere);
     }
@@ -156,10 +163,30 @@ export class GrassChunk {
   }
 
   addBitePoint(x: number, z: number, time: number) {
-    const idx = this.biteWriteIndex % BITE_CAPACITY;
+    const capacity = BITE_CAPACITY - this.exclusionCount;
+    if (!capacity) return;
+    const idx = this.exclusionCount + this.biteWriteIndex++ % capacity;
     this.bitePosXZNodes[idx].value.set(x, z);
     this.biteTimeNodes[idx].value = time;
-    this.biteWriteIndex++;
+    this.biteRadiusNodes[idx].value = BITE_RADIUS;
+    this.biteMinScaleNodes[idx].value = 0.2;
+  }
+
+  setBoardExclusions(points: Array<{ x: number; z: number }>) {
+    this.exclusionCount = Math.min(points.length, BITE_CAPACITY - 1);
+    this.biteWriteIndex = 0;
+    for (let i = 0; i < BITE_CAPACITY; i++) {
+      this.bitePosXZNodes[i].value.set(-999, -999);
+      this.biteTimeNodes[i].value = -999;
+      this.biteRadiusNodes[i].value = BITE_RADIUS;
+      this.biteMinScaleNodes[i].value = 0.2;
+    }
+    for (let i = 0; i < this.exclusionCount; i++) {
+      this.bitePosXZNodes[i].value.set(points[i].x, points[i].z);
+      this.biteTimeNodes[i].value = BOARD_EXCLUSION_TIME;
+      this.biteRadiusNodes[i].value = BOARD_EXCLUSION_RADIUS;
+      this.biteMinScaleNodes[i].value = 0;
+    }
   }
 }
 
@@ -169,6 +196,7 @@ export class GrassSystem {
   chunkSize = CHUNK_SIZE;
   bladesPerChunk = 5000;
   bladeSegments = 1;
+  private boardExclusions: Array<{ x: number; z: number }> = [];
 
   constructor(qualityPreset?: QualityPreset) {
     if (qualityPreset) {
@@ -237,6 +265,7 @@ export class GrassSystem {
     }
     this.initChunks(0, 0);
     this.addTo(scene);
+    this.setBoardExclusions(this.boardExclusions);
   }
 
   update(cameraPos: Vector3) {
@@ -272,7 +301,10 @@ export class GrassSystem {
       let chunk = chunksByOrigin.get(target.key);
       if (!chunk) {
         chunk = recyclable.pop();
-        if (chunk) chunk.regenerate(target.x, target.z);
+        if (chunk) {
+          chunk.regenerate(target.x, target.z);
+          chunk.setBoardExclusions(this.boardExclusions);
+        }
       }
       chunk?.update(t);
     }
@@ -285,5 +317,10 @@ export class GrassSystem {
   addBitePoint(x: number, z: number) {
     const time = performance.now() / 1000;
     for (const c of this.chunks) c.addBitePoint(x, z, time);
+  }
+
+  setBoardExclusions(points: Array<{ x: number; z: number }>) {
+    this.boardExclusions = points;
+    for (const chunk of this.chunks) chunk.setBoardExclusions(points);
   }
 }

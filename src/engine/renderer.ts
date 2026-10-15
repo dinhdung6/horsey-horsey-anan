@@ -1,6 +1,7 @@
 import { WebGPURenderer, ACESFilmicToneMapping } from 'three/webgpu';
 
 const MAX_PIXEL_RATIO = 2;
+const resizeHandlers = new WeakMap<WebGPURenderer, () => void>();
 
 export async function createRenderer(container: HTMLElement): Promise<WebGPURenderer> {
   const renderer = new WebGPURenderer({ antialias: true });
@@ -19,8 +20,17 @@ export async function createRenderer(container: HTMLElement): Promise<WebGPURend
   container.appendChild(renderer.domElement);
 
   window.addEventListener('resize', handleResize);
+  resizeHandlers.set(renderer, handleResize);
 
   return renderer;
+}
+
+export function disposeRenderer(renderer: WebGPURenderer) {
+  const handleResize = resizeHandlers.get(renderer);
+  if (handleResize) window.removeEventListener('resize', handleResize);
+  resizeHandlers.delete(renderer);
+  renderer.domElement.remove();
+  renderer.dispose();
 }
 
 export function getBackendName(renderer: WebGPURenderer): string {

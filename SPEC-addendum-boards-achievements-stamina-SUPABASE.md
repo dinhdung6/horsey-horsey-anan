@@ -99,53 +99,20 @@ create policy "Players mark own achievements read"
 
 ## 2. Where boards go (placement)
 
-**Interpretation to confirm with the user:** boards are placed so that **neighbouring boards are about 30–40 chunks apart**, and the first boards are 30–40 chunks from the spawn point. If the user meant something else, only the constants below change.
+### 2.1 Spawn rule
+Use the game's chunk coordinates. A square is **10 × 10 chunks** (`BOARD_REGION_SIZE` in `src/config/boards.ts`). Initially, its centre is the horse's starting chunk. After the horse discovers a board, centre the next square on that board's chunk. Spawn the next board 3 chunks ahead of the horse only after it leaves the current square. Keep an undiscovered board in place until its chunk is reached, even if the horse leaves the square before reaching it. Do not repeat discovered messages while undiscovered messages remain. Once all active messages are discovered, choose a previously discovered message at random. Only one board is active at a time.
 
-### 2.1 Algorithm (deterministic, no storage needed)
-Use the game's own **chunk** coordinates (the same grid used by the grass system). Constants in `src/config/boards.ts`:
+The player's `world_seed` from Supabase provides a deterministic ordering of message ids. Placement changes do not change achievement identity: discoveries remain keyed by the stable database message id. The development-only `?seed=123` override never overwrites the database seed. `?debugBoards=1&boardNear=1` spawns an uncollected board in the starting chunk for local testing.
 
-```ts
-export const BOARD_CELL = 35;      // chunks per cell. Allowed range 30-40
-export const BOARD_JITTER = 2;     // +-2 chunks random shift inside the cell
-export const BOARD_LOAD_RADIUS = 10; // chunks: create the board mesh when the player is this close
-export const BOARD_UNLOAD_RADIUS = 13;
-```
+At 16 m per chunk, the 10-chunk square spans 160 m on each axis. Board meshes are streamed one at a time; no distant board textures are created.
 
-1. Divide the world into square **cells** of `BOARD_CELL × BOARD_CELL` chunks. Cell `(cx, cz)` is centred on chunk `(cx × BOARD_CELL, cz × BOARD_CELL)`. The spawn chunk is `(0, 0)`.
-2. **The spawn cell `(0,0)` has no board.** Only the neighbouring cells do.
-3. The board's chunk is the cell centre plus a random shift of −2…+2 chunks on each axis:
-   `jx = hash32(seed, cx, cz) % 5 − 2`, `jz = hash32(seed ^ 0x9E3779B9, cx, cz) % 5 − 2`.
-   Neighbouring boards are then 31–39 chunks apart and the nearest board is 33–37 chunks from spawn.
-4. **Which cells get a board:** list all cells except `(0,0)`, sort by **ring** `max(|cx|,|cz|)` and then by `hash32(seed ^ 0x51ED270B, cx, cz)` (random order inside a ring). Take the first `N` cells (`N` = number of messages). With 50 messages that is every cell of rings 1–3 (8 + 16 + 24 = 48) plus 2 random cells of ring 4. Cells beyond that have no board. Everything is computed once at startup into a `Map<cellKey, Board>`.
-5. **Which message goes where, with no repeats:** shuffle the list of message ids once with a seeded Fisher–Yates shuffle, then give the i-th cell in the sorted list the i-th id. Each message therefore appears on exactly one board.
-6. `seed` comes from the authenticated player's `player_profiles.world_seed` row in Supabase (created once as described in section 1.4). It stays consistent across browsers/devices. A development-only `?seed=123` override may be used for visual debugging; it must never overwrite the database seed or affect saved achievement identity.
-
-```ts
-const hash32 = (seed: number, a: number, b: number) => {
-  let h = (seed ^ Math.imul(a, 374761393) ^ Math.imul(b, 668265263)) >>> 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-  return (h ^ (h >>> 16)) >>> 0;
-};
-function mulberry32(a: number) { // small seeded PRNG
-  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-```
-
-**Checked by simulation** (2,000 random seeds, same algorithm in Python): 50 boards each time, all 50 messages used exactly once, no two boards in the same chunk, neighbouring boards 31.0–39.2 chunks apart, nearest board 33 chunks from spawn, farthest up to about 201 chunks from spawn. Write the same checks as a unit test (`src/world/boards.test.ts`) over 1,000 seeds.
-
-### 2.2 How far is that in metres?
-"30–40 chunks" depends on the game's chunk size. If chunks are 16 m (SPEC.md default), 35 chunks is 560 m and the farthest board is about 3.2 km from spawn. **On first run, print the chunk size and these distances and tell the user.** If it feels too far or too near, change `BOARD_CELL` (30–40) only.
-
-### 2.3 Position and orientation
-- World position = centre of the board's chunk plus a random offset of up to ±3 m (seeded), `y = terrain.heightAt(x, z)`.
-- Yaw: the board **faces the spawn point**, so a player travelling outward sees the front first. `yaw = atan2(−x, −z)` (check the sign against the model's facing with a debug arrow).
+### 2.2 Position and orientation
+- World position = centre of the spawn chunk, `y = terrain.heightAt(x, z)`.
+- Yaw faces the horse when the board spawns.
 - Hide grass blades in a 2 m radius around the board's posts. Reuse the "bite point" or exclusion uniform from the grass shader; do not add a second system.
 
-### 2.4 Streaming
-Create a board's mesh and texture only when the player is within `BOARD_LOAD_RADIUS` chunks, and dispose of it beyond `BOARD_UNLOAD_RADIUS` (dispose geometry, material and texture). At most one or two boards are loaded at any time. Never create 50 textures at startup.
+### 2.3 Streaming
+Create the board mesh and texture when a new region spawns it. Dispose of the previous board's geometry, material and texture after its message is discovered and a later region spawns the next board. At most one board is loaded; never create textures for messages that have not spawned.
 
 ## 3. The board itself
 
@@ -176,7 +143,7 @@ Draw the message into a `<canvas>` and use it as a texture on the panel plane (`
 - Canvas size 1536 × 800 pixels for a 3.6 × 1.9 m panel (about 430 px per metre).
 - **Font:** use one that fully supports Vietnamese. **Be Vietnam Pro** is a good choice (licence OFL-1.1, https://fontsource.org/fonts/be-vietnam-pro). Install with `npm i @fontsource/be-vietnam-pro` and import the weights needed. Check which subset files the package provides (the Vietnamese ones). Self-host the font; do not load it from a CDN at runtime.
 - Before drawing, wait for the font: `await document.fonts.load('600 48px "Be Vietnam Pro"')`. Without this the first board is drawn in a fallback font without proper diacritics.
-- Colours: dark panel `#2a1f1a`, warm cream text `#f3e6c8`, a thin lighter border. Add a small `emissive` map (same canvas, emissive intensity about 0.25 at night, 0 by day) so the text stays readable in the dark, like the glow on the reference board.
+- Colours: dark panel `#2a1f1a`, bright cream text, a thin lighter border. Use a restrained emissive map so the text stays readable in daylight and at night.
 
 ### 3.3 Text layout (auto-fit)
 ```ts
@@ -207,7 +174,7 @@ Every frame (or when the player's chunk changes), compare the player's chunk wit
 - **Only after a successful database insert** show the chime and new-discovery toast. If the insert fails due to network/auth error, show a small retry notice and allow the next entry/retry to save it; do not falsely announce a persisted achievement.
 - On login and reload, query all of the player's achievements ordered by `discovered_at ASC, message_id ASC` for a deterministic discovery sequence. Keep an in-memory copy only while signed in; do not persist it in browser storage.
 - Mark `read_at` when the user opens a discovered message for the first time. For a secure production implementation, prefer a dedicated server-side RPC that only sets `read_at` and leaves discovery data immutable.
-- Options → "Reset thông điệp" requires confirmation and deletes **only the current user's** achievement rows. Because the SQL above deliberately has no client delete policy, provide a separate, explicitly reviewed owner-only reset RPC/policy in a future implementation if reset is required; until then **hide/disable Reset** rather than pretend it works. Do not delete the world seed.
+- After all active messages are discovered, show a confirmed "Reset thông điệp" action. It calls the owner-scoped `reset_own_achievements` RPC from `SUPABASE-RESET-ACHIEVEMENTS.sql`, which verifies completion and deletes only the authenticated user's achievement rows. Do not delete the world seed.
 
 ### 4.3 Notification (toast)
 On unlock, show a toast at the top-centre for 4 s (queue several if needed): the title "Đã tìm thấy một thông điệp" and "12 / 50" (progress count, not a board number), then the first 60 characters of the message with "…". It must never pause the game or steal keyboard focus. Fade in and out over 0.3 s.
@@ -312,7 +279,7 @@ With these numbers one cycle (12.5 s galloping plus 7 s eating) averages about 4
 
 ## 6. Settings and persistence
 
-Show logged-in account identity and a **Log out** action in Options. Supabase persists message content, world seed and discoveries per authenticated user. Stamina is not persisted and starts full on each visit. No browser storage is used for gameplay state. Reset progress is disabled unless a separately reviewed, user-scoped server operation is implemented (section 4.2).
+Show logged-in account identity and a **Log out** action in Options. Supabase persists message content, world seed and discoveries per authenticated user. Stamina is not persisted and starts full on each visit. No browser storage is used for gameplay state. Reset progress is available after all active messages are found, using the user-scoped RPC in section 4.2.
 
 ## 7. Files to add or change
 
@@ -336,12 +303,12 @@ SUPABASE-SETUP.md                     ← manual website steps and SQL from sect
 Update `CREDITS.md` with the font and any model or sound used. Do not create `public/data/messages.json` as a fallback or commit actual credentials.
 
 ## 8. Acceptance checks
-- Unit test: for 1,000 seeds there are exactly N boards, each message id appears once, no two boards share a chunk, neighbouring boards are 31–39.2 chunks apart, and the nearest board is 33–37 chunks from spawn.
-- Walking from spawn in a straight line, the first board appears after about 33–37 chunks. The printed distance in metres matches what the user expects (section 2.2).
+- Unit test: message ids have a deterministic order; the active board stays until discovered, and the next board spawns 3 chunks ahead only after the horse leaves the 10×10 square centred on the last discovered board.
+- Leaving the starting square spawns the first board 3 chunks ahead. Only one board texture is loaded at a time.
 - A board's text is fully readable from 8 m, has correct Vietnamese diacritics on the very first board shown, and never overflows the panel (test with a 20-character and a 280-character message).
 - Entering a board's chunk plays the chime once, shows the toast once and adds the message to the log. Walking out and back in does nothing. Reloading or signing in on another device restores the same user’s discoveries and board placement from Supabase.
 - Physical boards show no message or discovery numbers; after two discoveries the achievement panel displays rows numbered 1 and 2 (in discovery order), regardless of database ids. A second account sees separate progress. Failed inserts do not generate success toasts.
-- Boards load and unload with no frame hitch above about 100 ms, and no more than two board textures exist at once.
+- Boards load and unload with no frame hitch above about 100 ms, and no more than one board texture exists at once.
 - Stamina: holding the run key drains the bar; at 0 the horse slows to a walk within about 1 s and the run key does nothing; holding E refills the bar; the horse can gallop again once the recover threshold is reached; the HUD matches the state at all times.
 - Auto-wander never gallops while stamina is under 50 % and goes to eat when it is under 25 %.
 

@@ -1,5 +1,7 @@
+import { playChime } from './chime';
+
 type SoundName = 'wind_calm' | 'wind_strong' | 'rain' | 'night' | 'horse_walk' | 'horse_trot' | 'horse_gallop' | 'horse_eat';
-type BusName = 'weather' | 'night' | 'hooves' | 'eat';
+type BusName = 'weather' | 'night' | 'hooves' | 'eat' | 'sfx';
 type HorseAudioState = { speed: number; grounded: boolean; eating: boolean; sitting: boolean };
 type LoopTrack = { audio: HTMLAudioElement; gain: GainNode; target: number; source: MediaElementAudioSourceNode; rate: number };
 
@@ -37,6 +39,7 @@ export class AudioManager {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private readonly buses = new Map<BusName, GainNode>();
+  private ambienceDuck: GainNode | null = null;
   private readonly tracks = new Map<SoundName, LoopTrack>();
   private readonly targets = new Map<SoundName, number>();
   private enabled: boolean;
@@ -67,9 +70,19 @@ export class AudioManager {
       this.master = this.context.createGain();
       this.master.gain.value = this.enabled ? 1 : 0;
       this.master.connect(this.context.destination);
-      for (const name of ['weather', 'night', 'hooves', 'eat'] as const) {
+      this.ambienceDuck = this.context.createGain();
+      this.ambienceDuck.connect(this.master);
+      for (const name of ['weather', 'night', 'hooves', 'eat', 'sfx'] as const) {
         const bus = this.context.createGain();
-        bus.connect(this.master);
+        bus.connect(name === 'weather' || name === 'night' ? this.ambienceDuck : this.master);
+        if (name === 'sfx') {
+          const echo = this.context.createDelay(0.3);
+          const echoGain = this.context.createGain();
+          echo.delayTime.value = 0.14;
+          echoGain.gain.value = 0.12;
+          bus.connect(echo);
+          echo.connect(echoGain).connect(this.master);
+        }
         this.buses.set(name, bus);
       }
       document.removeEventListener('keydown', this.onGesture);
@@ -84,6 +97,17 @@ export class AudioManager {
   setWeather(name: string) {
     this.weather = WEATHER_MIX[name] ? name : 'clear';
     this.applyWeather(3);
+  }
+
+  playAchievementChime(milestone: boolean) {
+    if (!this.enabled) return;
+    if (!this.context) this.activate();
+    if (!this.context) return;
+    const now = this.context.currentTime;
+    this.ambienceDuck?.gain.cancelScheduledValues(now);
+    this.ambienceDuck?.gain.setTargetAtTime(0.707, now, 0.04);
+    this.ambienceDuck?.gain.setTargetAtTime(1, now + 1.5, 0.18);
+    playChime(this.context, this.buses.get('sfx')!, milestone);
   }
 
   setEnabled(enabled: boolean) {

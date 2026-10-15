@@ -8,6 +8,8 @@ type OptionsPanelOptions = {
   onQuality: (name: string) => void;
   onSound: (enabled: boolean) => void;
   onAutoWander: (enabled: boolean) => void;
+  accountEmail: string;
+  onSignOut: () => Promise<void>;
 };
 
 function addSelect(panel: HTMLElement, label: string, value: string, values: string[], onChange: (value: string) => void) {
@@ -57,6 +59,28 @@ export function createOptionsPanel(options: OptionsPanelOptions) {
   addSelect(panel, 'Quality', options.settings.quality, options.qualityNames, options.onQuality);
   addToggle(panel, 'Sound', options.settings.sound, options.onSound);
   addToggle(panel, 'Auto wander', options.settings.autoWander, options.onAutoWander);
+  const account = document.createElement('div');
+  account.className = 'option-row account-row';
+  const identity = document.createElement('span');
+  identity.textContent = options.accountEmail;
+  identity.title = options.accountEmail;
+  const signOut = document.createElement('button');
+  signOut.type = 'button';
+  signOut.textContent = 'Log out';
+  const accountStatus = document.createElement('span');
+  accountStatus.className = 'account-status';
+  accountStatus.setAttribute('role', 'status');
+  signOut.addEventListener('click', () => {
+    signOut.disabled = true;
+    accountStatus.textContent = '';
+    void options.onSignOut().catch((error: unknown) => {
+      console.error('Could not sign out:', error);
+      accountStatus.textContent = 'Could not log out. Try again.';
+      signOut.disabled = false;
+    });
+  });
+  account.append(identity, signOut, accountStatus);
+  panel.append(account);
   button.addEventListener('click', () => {
     panel.hidden = !panel.hidden;
     button.setAttribute('aria-expanded', String(!panel.hidden));
